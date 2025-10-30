@@ -1,0 +1,105 @@
+Base URL : https://borobudur-capture-api.vercel.app/
+
+GET Last Completed Session Status : https://borobudur-capture-api.vercel.app/session/current
+**First Time Response** (no previous sessions):
+```json
+{
+  "status": "success",
+  "message": "No previous sessions found - this is the first session",
+  "data": {
+    "last_completed_session": null,
+    "next_session_id": "session_001",
+    "is_first_session": true
+  }
+}
+```
+
+**Subsequent Times Response** (previous sessions exist):
+```json
+{
+  "status": "success",
+  "message": "Last completed session retrieved successfully",
+  "data": {
+    "last_completed_session": "session_003",
+    "completed_at": "2025-10-01T16:45:00.000Z",
+    "next_session_id": "session_004",
+    "is_first_session": false
+  }
+}
+
+Upload
+POST Image : https://borobudur-capture-api.vercel.app/upload/image
+Content-Type: multipart/form-data
+
+Body:
+- photo_id: string (example: "0007")
+- file: binary (image/jpeg)
+```
+
+**Note**: `session_id` is automatically determined from the next session sequence.
+
+Response:
+```json
+{
+  "status": "success",
+  "photo_id": "0007",
+  "session_id": "session_003",
+  "path": "session_003/images/0007.jpg"
+}
+
+POST metadata : https://borobudur-capture-api.vercel.app/upload/meta
+Content-Type: application/json
+
+Body:
+{
+  "photo_id": "001",
+  "session_id": "session_001",
+  "group_id": "2"
+}
+```
+
+**Note**:
+- `session_id` is provided by the STM and is used directly for storage pathing.
+- `group_id` (string) groups images captured on the same wall before the robot turns; when the robot turns to the next wall, subsequent images use a new `group_id`.
+- Only the specified fields are stored in the metadata JSON in Azure Blob Storage.
+
+Response:
+```json
+{
+  "status": "success",
+  "photo_id": "0007",
+  "session_id": "session_003",
+  "path": "session_003/metadata/0007.json"
+}
+```
+POST End Session : https://borobudur-capture-api.vercel.app/session/end
+Response:
+```json
+{
+  "status": "success",
+  "message": "Session completed and recorded successfully",
+  "data": {
+    "completed_session_id": "session_003",
+    "completed_at": "2025-10-02T16:45:00.000Z",
+    "status": "completed"
+  }
+}
+```
+
+Data Analysis Endpoints
+GET session status : https://borobudur-capture-api.vercel.app/session/status/session_id (id nya diganti sesuai session yang diinginkan)
+Response:
+```json
+{
+  "status": "success",
+  "session_id": "session_003",
+  "image_count": 120,
+  "metadata_count": 118,
+  "is_consistent": false,
+  "missing_metadata": ["0034", "0087"],
+  "missing_images": []
+}
+```
+
+GET session download : https://borobudur-capture-api.vercel.app/session/download/session_id (id nya diganti sesuai session yang diinginkan)
+Response: ZIP file containing all images and metadata for the session.
