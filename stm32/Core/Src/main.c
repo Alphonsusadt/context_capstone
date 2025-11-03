@@ -30,6 +30,12 @@
 #define WIFI_PASS "123456781"
 #define WIFI_RX_BUFFER_SIZE 512
 
+// --- TESTING/DEVELOPMENT CONFIGURATION ---
+// Set ENABLE_PHOTO_LIMIT to 1 for testing (captures MAX_PHOTOS then stops)
+// Set ENABLE_PHOTO_LIMIT to 0 for production (infinite loop)
+#define ENABLE_PHOTO_LIMIT  1      // 1 = testing mode, 0 = production mode
+#define MAX_PHOTOS          10     // Maximum photos to capture (ignored if ENABLE_PHOTO_LIMIT = 0)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,6 +55,10 @@ uint8_t wifi_rx_buffer[WIFI_RX_BUFFER_SIZE];
 
 // Modbus Master untuk komunikasi dengan ESP32-CAM
 ModbusMaster_t modbus_master;
+
+// Photo ID and Group ID counters
+uint16_t photo_counter = 1;    // Photo ID counter (starts from 1)
+uint16_t current_group = 1;    // Current group ID (changes when robot turns)
 
 // OLD: UART receive buffer and state for STM32 <-> ESP32 comms (DEPRECATED - using Modbus now)
 // #define RX_LINE_MAX 256
@@ -244,18 +254,81 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  // Print configuration mode
+#if ENABLE_PHOTO_LIMIT
+  printf("\r\n========================================\r\n");
+  printf("[Config] TESTING MODE ACTIVE\r\n");
+  printf("[Config] Will capture maximum %d photos\r\n", MAX_PHOTOS);
+  printf("========================================\r\n\r\n");
+#else
+  printf("\r\n========================================\r\n");
+  printf("[Config] PRODUCTION MODE ACTIVE\r\n");
+  printf("[Config] Infinite capture loop enabled\r\n");
+  printf("========================================\r\n\r\n");
+#endif
+
 while (1)
 {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-    // =================================================================
-    // MODBUS RTU: Send CAPTURE command to ESP32-CAM
-    // =================================================================
-    printf("\r\n[Modbus] Mengirim perintah CAPTURE ke ESP32-CAM (Reg 0x0001 = 1)...\r\n");
+    // Check photo limit (if enabled)
+#if ENABLE_PHOTO_LIMIT
+    if (photo_counter > MAX_PHOTOS) {
+        printf("\r\n========================================\r\n");
+        printf("[System] MAXIMUM PHOTOS REACHED (%d)\r\n", MAX_PHOTOS);
+        printf("[System] Total captured: %d photos\r\n", photo_counter - 1);
+        printf("[System] Program stopped.\r\n");
+        printf("[System] Press RESET button to restart.\r\n");
+        printf("========================================\r\n\r\n");
+        break;  // Exit main loop
+    }
+#endif
 
-    int result = ModbusMaster_SendCaptureCommand(&modbus_master);
+    // =================================================================
+    // STEP 1: Send Photo ID and Group ID to ESP32-CAM
+    // =================================================================
+#if ENABLE_PHOTO_LIMIT
+    printf("\r\n[Capture #%d / %d] === Starting new capture sequence ===\r\n", photo_counter, MAX_PHOTOS);
+#else
+    printf("\r\n[Capture #%d] === Starting new capture sequence ===\r\n", photo_counter);
+#endif
+    printf("[Modbus] Photo ID: %d, Group ID: %d\r\n", photo_counter, current_group);
+
+    // Send Photo ID to ESP32-CAM (Register 0x0004)
+    printf("[Modbus] Setting Photo ID to %d (Reg 0x0004)...\r\n", photo_counter);
+    int result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                                   MODBUS_SLAVE_ADDR,
+                                                   0x0004,  // REG_PHOTO_ID
+                                                   photo_counter);
+    if (result != MODBUS_OK) {
+        printf("[Modbus] ERROR: Gagal set Photo ID (Error code: %d)\r\n", result);
+        HAL_Delay(5000);
+        continue;
+    }
+    printf("[Modbus] Photo ID set successfully.\r\n");
+
+    // Send Group ID to ESP32-CAM (Register 0x0005)
+    printf("[Modbus] Setting Group ID to %d (Reg 0x0005)...\r\n", current_group);
+    result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                              MODBUS_SLAVE_ADDR,
+                                              0x0005,  // REG_GROUP_ID
+                                              current_group);
+    if (result != MODBUS_OK) {
+        printf("[Modbus] ERROR: Gagal set Group ID (Error code: %d)\r\n", result);
+        HAL_Delay(5000);
+        continue;
+    }
+    printf("[Modbus] Group ID set successfully.\r\n");
+
+    // =================================================================
+    // STEP 2: Send CAPTURE command to ESP32-CAM
+    // =================================================================
+    printf("[Modbus] Mengirim perintah CAPTURE ke ESP32-CAM (Reg 0x0001 = 1)...\r\n");
+
+    result = ModbusMaster_SendCaptureCommand(&modbus_master);
 
     if (result != MODBUS_OK) {
         printf("[Modbus] ERROR: Gagal mengirim command (Error code: %d)\r\n", result);
@@ -273,33 +346,78 @@ while (1)
     printf("[Modbus] Command berhasil dikirim! ESP32-CAM acknowledge.\r\n");
 
     // =================================================================
-    // MODBUS RTU: Poll status sampai selesai (max 30 detik)
+    // STEP 3: Poll status sampai selesai (max 60 detik for Azure upload)
     // =================================================================
-    printf("[Modbus] Polling status ESP32-CAM (max 30 detik)...\r\n");
+    printf("[Modbus] Polling status ESP32-CAM (max 60 detik)...\r\n");
 
-    result = ModbusMaster_WaitForCompletion(&modbus_master, 30000); // 30 detik timeout
+    result = ModbusMaster_WaitForCompletion(&modbus_master, 60000); // 60 detik timeout (Azure HTTPS slower)
 
     if (result == MODBUS_OK) {
         printf("[Modbus] SUCCESS! ESP32-CAM selesai capture & upload.\r\n");
+        printf("[Modbus] Photo #%03d uploaded successfully (Group %d).\r\n", photo_counter, current_group);
+
+        // Increment photo counter untuk foto berikutnya
+        photo_counter++;
+        printf("[Counter] Photo counter incremented to: %d\r\n", photo_counter);
+
     } else if (result == MODBUS_ERR_TIMEOUT) {
-        printf("[Modbus] TIMEOUT! ESP32-CAM tidak selesai dalam 30 detik.\r\n");
+        printf("[Modbus] TIMEOUT! ESP32-CAM tidak selesai dalam 60 detik.\r\n");
     } else if (result == MODBUS_ERR_EXCEPTION) {
         printf("[Modbus] ERROR! ESP32-CAM melaporkan kegagalan (status=ERROR).\r\n");
 
-        // Optional: Read error code from register 0x0003
+        // Read error code from register 0x0003
         uint16_t error_code = 0;
         if (ModbusMaster_ReadHoldingRegisters(&modbus_master, MODBUS_SLAVE_ADDR,
                                                MODBUS_REG_ERROR_CODE, 1, &error_code) == MODBUS_OK) {
-            printf("  -> Error Code: 0x%04X\r\n", error_code);
+            printf("  -> Error Code: 0x%04X ", error_code);
+
+            // Decode error code
+            switch(error_code) {
+                case 0x0001: printf("(Camera capture failed)\r\n"); break;
+                case 0x0002: printf("(WiFi disconnected)\r\n"); break;
+                case 0x0003: printf("(Image upload failed)\r\n"); break;
+                case 0x0004: printf("(Metadata upload failed)\r\n"); break;
+                case 0x0005: printf("(Session ID retrieval failed)\r\n"); break;
+                case 0x0006: printf("(Invalid Photo ID)\r\n"); break;
+                default: printf("(Unknown error)\r\n"); break;
+            }
         }
+
+        // Optional: Retry logic bisa ditambahkan di sini
+        // Untuk sekarang, skip dan lanjut ke foto berikutnya
+        printf("[Recovery] Skipping failed capture, moving to next photo...\r\n");
+        photo_counter++;  // Increment juga untuk skip photo_id yang gagal
     } else {
         printf("[Modbus] ERROR: Communication error (Error code: %d)\r\n", result);
     }
 
+    // =================================================================
+    // STEP 4: Check for group change (navigation logic - Phase 2)
+    // =================================================================
+    // TODO (Phase 2): Implement group change detection based on ultrasonic sensors
+    // When robot turns (detected by navigation logic), increment current_group
+    //
+    // Example logic:
+    // if (robot_turned) {  // Will be detected by HC-SR04 + motor encoder
+    //     current_group++;
+    //     printf("[Navigation] Robot turned! Group ID incremented to: %d\r\n", current_group);
+    // }
+    //
+    // For now, group_id stays constant at 1 (single straight corridor)
+
     // Tunggu 5 detik sebelum perintah berikutnya
-    printf("Menunggu 5 detik sebelum perintah berikutnya...\r\n");
+    printf("\r\nMenunggu 5 detik sebelum capture berikutnya...\r\n");
     HAL_Delay(5000);
 }
+
+  // Idle mode after photo limit reached (only executed if ENABLE_PHOTO_LIMIT = 1)
+  printf("\r\n[System] Entering idle mode...\r\n");
+  printf("[System] LED will blink slowly to indicate idle state.\r\n");
+  while (1) {
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);  // Blink LED slowly
+      HAL_Delay(1000);  // 1 second on, 1 second off
+  }
+
   /* USER CODE END 3 */
 }
 

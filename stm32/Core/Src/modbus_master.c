@@ -254,7 +254,7 @@ int ModbusMaster_WaitForCompletion(ModbusMaster_t *modbus, uint32_t max_wait_ms)
         }
 
         // Status is IDLE or BUSY, wait and retry
-        HAL_Delay(500);  // Poll every 500ms
+        HAL_Delay(200);  // Poll every 200ms (increased frequency for Azure HTTPS latency)
     }
 
     // Timeout
