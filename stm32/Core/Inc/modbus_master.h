@@ -43,6 +43,9 @@
 #define MODBUS_REG_COMMAND          0x0001  // Command register
 #define MODBUS_REG_STATUS           0x0002  // Status register
 #define MODBUS_REG_ERROR_CODE       0x0003  // Error code register
+#define MODBUS_REG_PHOTO_ID         0x0004  // Photo ID register
+#define MODBUS_REG_GROUP_ID         0x0005  // Group ID register
+#define MODBUS_REG_ESP32_READY      0x0006  // ESP32 Ready flag (Fix 2: Handshake)
 
 /* Command Values */
 #define CMD_IDLE                    0x0000
@@ -86,6 +89,12 @@ typedef struct {
  * @param timeout_ms Response timeout in milliseconds
  */
 void ModbusMaster_Init(ModbusMaster_t *modbus, UART_HandleTypeDef *huart, uint32_t timeout_ms);
+
+/**
+ * @brief Flush UART RX buffer (Fix 4: Clear stale data)
+ * @param huart Pointer to UART handle
+ */
+void ModbusMaster_FlushRxBuffer(UART_HandleTypeDef *huart);
 
 /**
  * @brief Write single register (Function Code 0x06)

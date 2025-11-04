@@ -34,7 +34,7 @@
 // Set ENABLE_PHOTO_LIMIT to 1 for testing (captures MAX_PHOTOS then stops)
 // Set ENABLE_PHOTO_LIMIT to 0 for production (infinite loop)
 #define ENABLE_PHOTO_LIMIT  1      // 1 = testing mode, 0 = production mode
-#define MAX_PHOTOS          10     // Maximum photos to capture (ignored if ENABLE_PHOTO_LIMIT = 0)
+#define MAX_PHOTOS          3     // Maximum photos to capture (ignored if ENABLE_PHOTO_LIMIT = 0)
 
 /* USER CODE END PD */
 
@@ -268,6 +268,74 @@ int main(void)
   printf("========================================\r\n\r\n");
 #endif
 
+  // ===================================================================
+  // FIX 2: Wait for ESP32-CAM to be ready (Handshake mechanism)
+  // ESP32 sets READY flag (0x0006) after WiFi + Session + Camera init
+  // ===================================================================
+  printf("\r\n[Startup] Waiting for ESP32-CAM initialization...\r\n");
+  printf("[Startup] Checking READY flag (Register 0x0006) every 2 seconds...\r\n\r\n");
+
+  uint8_t ready_check_count = 0;
+  uint16_t esp32_ready = 0;
+
+  while (1) {
+      // Flush RX buffer before critical read (Fix 4)
+      ModbusMaster_FlushRxBuffer(modbus_master.huart);
+
+      // Read ESP32 READY register (0x0006)
+      int result = ModbusMaster_ReadHoldingRegisters(&modbus_master,
+                                                      MODBUS_SLAVE_ADDR,
+                                                      MODBUS_REG_ESP32_READY,
+                                                      1,
+                                                      &esp32_ready);
+
+      if (result == MODBUS_OK && esp32_ready == 1) {
+          printf("✅ [Startup] ESP32-CAM is READY! Starting capture sequence...\r\n\r\n");
+          break;  // ESP32 ready, exit wait loop
+      }
+
+      ready_check_count++;
+
+      if (result == MODBUS_OK) {
+          printf("[Startup] ESP32-CAM not ready yet (READY=%d), check #%d, waiting 2s...\r\n",
+                 esp32_ready, ready_check_count);
+      } else {
+          printf("[Startup] Cannot read READY register (error %d), check #%d, waiting 2s...\r\n",
+                 result, ready_check_count);
+      }
+
+      HAL_Delay(2000);  // Check every 2 seconds
+
+      // Optional: Timeout after 60 seconds (30 checks)
+      if (ready_check_count >= 30) {
+          printf("\r\n⚠️  [Startup] WARNING: ESP32-CAM tidak ready setelah 60 detik!\r\n");
+          printf("[Startup] Proceeding anyway, but first capture may fail.\r\n\r\n");
+          break;
+      }
+  }
+
+  // ===================================================================
+  // FIX 6: Set Group ID once at startup (not every capture)
+  // ===================================================================
+  printf("[Startup] Setting Group ID to %d (once at startup)...\r\n", current_group);
+
+  // Flush buffer before critical command (Fix 4)
+  ModbusMaster_FlushRxBuffer(modbus_master.huart);
+
+  int group_result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                                       MODBUS_SLAVE_ADDR,
+                                                       0x0005,  // REG_GROUP_ID
+                                                       current_group);
+  if (group_result == MODBUS_OK) {
+      printf("[Startup] Group ID set successfully.\r\n\r\n");
+  } else {
+      printf("[Startup] WARNING: Failed to set Group ID (error %d)\r\n\r\n", group_result);
+  }
+
+  printf("========================================\r\n");
+  printf("✅ READY TO START CAPTURE LOOP\r\n");
+  printf("========================================\r\n\r\n");
+
 while (1)
 {
     /* USER CODE END WHILE */
@@ -297,6 +365,9 @@ while (1)
 #endif
     printf("[Modbus] Photo ID: %d, Group ID: %d\r\n", photo_counter, current_group);
 
+    // Flush RX buffer before critical command (Fix 4)
+    ModbusMaster_FlushRxBuffer(modbus_master.huart);
+
     // Send Photo ID to ESP32-CAM (Register 0x0004)
     printf("[Modbus] Setting Photo ID to %d (Reg 0x0004)...\r\n", photo_counter);
     int result = ModbusMaster_WriteSingleRegister(&modbus_master,
@@ -310,18 +381,7 @@ while (1)
     }
     printf("[Modbus] Photo ID set successfully.\r\n");
 
-    // Send Group ID to ESP32-CAM (Register 0x0005)
-    printf("[Modbus] Setting Group ID to %d (Reg 0x0005)...\r\n", current_group);
-    result = ModbusMaster_WriteSingleRegister(&modbus_master,
-                                              MODBUS_SLAVE_ADDR,
-                                              0x0005,  // REG_GROUP_ID
-                                              current_group);
-    if (result != MODBUS_OK) {
-        printf("[Modbus] ERROR: Gagal set Group ID (Error code: %d)\r\n", result);
-        HAL_Delay(5000);
-        continue;
-    }
-    printf("[Modbus] Group ID set successfully.\r\n");
+    // NOTE: Group ID set once at startup (Fix 6 - optimization)
 
     // =================================================================
     // STEP 2: Send CAPTURE command to ESP32-CAM
@@ -346,11 +406,11 @@ while (1)
     printf("[Modbus] Command berhasil dikirim! ESP32-CAM acknowledge.\r\n");
 
     // =================================================================
-    // STEP 3: Poll status sampai selesai (max 60 detik for Azure upload)
+    // STEP 3: Poll status sampai selesai (max 90 detik for Azure upload)
     // =================================================================
-    printf("[Modbus] Polling status ESP32-CAM (max 60 detik)...\r\n");
+    printf("[Modbus] Polling status ESP32-CAM (max 90 detik)...\r\n");
 
-    result = ModbusMaster_WaitForCompletion(&modbus_master, 60000); // 60 detik timeout (Azure HTTPS slower)
+    result = ModbusMaster_WaitForCompletion(&modbus_master, 90000); // 90 detik timeout (Azure HTTPS + idempotency buffer)
 
     if (result == MODBUS_OK) {
         printf("[Modbus] SUCCESS! ESP32-CAM selesai capture & upload.\r\n");
@@ -361,7 +421,7 @@ while (1)
         printf("[Counter] Photo counter incremented to: %d\r\n", photo_counter);
 
     } else if (result == MODBUS_ERR_TIMEOUT) {
-        printf("[Modbus] TIMEOUT! ESP32-CAM tidak selesai dalam 60 detik.\r\n");
+        printf("[Modbus] TIMEOUT! ESP32-CAM tidak selesai dalam 90 detik.\r\n");
     } else if (result == MODBUS_ERR_EXCEPTION) {
         printf("[Modbus] ERROR! ESP32-CAM melaporkan kegagalan (status=ERROR).\r\n");
 

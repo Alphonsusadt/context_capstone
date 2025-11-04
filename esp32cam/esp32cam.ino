@@ -30,9 +30,9 @@ const char* password = "123456781";
 
 #if USE_PRODUCTION_BACKEND
   // PRODUCTION: Azure Backend (Vercel)
-  const char* serverURL_session = "https://borobudur-capture-api.vercel.app/session/current";
-  const char* serverURL_image = "https://borobudur-capture-api.vercel.app/upload/image";
-  const char* serverURL_meta = "https://borobudur-capture-api.vercel.app/upload/meta";
+  const char* serverURL_session = "https://test-capstone-backend-azure.vercel.app/session/current";
+  const char* serverURL_image = "https://test-capstone-backend-azure.vercel.app/upload/image";
+  const char* serverURL_meta = "https://test-capstone-backend-azure.vercel.app/upload/meta";
   #define SERVER_MODE "PRODUCTION (Azure)"
 #else
   // DEVELOPMENT: Local Flask Server
@@ -55,6 +55,7 @@ const char* password = "123456781";
 #define REG_ERROR_CODE      0x0003
 #define REG_PHOTO_ID        0x0004  // Photo ID (integer: 1, 2, 3, ...)
 #define REG_GROUP_ID        0x0005  // Group ID (integer: 1, 1, 2, 2, ...)
+#define REG_ESP32_READY     0x0006  // ESP32 Ready flag (Fix 2: Handshake)
 
 // Command Values
 #define CMD_IDLE            0x0000
@@ -88,12 +89,19 @@ volatile uint16_t reg_status = STATUS_IDLE;
 volatile uint16_t reg_error_code = ERR_NONE;
 volatile uint16_t reg_photo_id = 0;      // Photo ID dari STM32
 volatile uint16_t reg_group_id = 0;      // Group ID dari STM32
+volatile uint16_t reg_esp32_ready = 0;   // Ready flag (Fix 2: Handshake) - 0=not ready, 1=ready
 
 // Session management
 String current_session_id = "";          // Session ID dari server (diambil saat startup)
 
 // Task flag
 volatile bool task_pending = false;
+
+// ===================================================================
+// FIX: Idempotency - Track last completed photo ID
+// Prevents duplicate capture if STM32 timeouts and retries
+// ===================================================================
+volatile uint16_t last_completed_photo_id = 0;  // Track last successfully completed photo
 
 // Callback untuk Modbus - dipanggil ketika Master menulis register
 uint16_t cbWrite(TRegister* reg, uint16_t val) {
@@ -486,6 +494,7 @@ void setup() {
   mb.addHreg(REG_ERROR_CODE, reg_error_code); // Error code register
   mb.addHreg(REG_PHOTO_ID, reg_photo_id);     // Photo ID register
   mb.addHreg(REG_GROUP_ID, reg_group_id);     // Group ID register
+  mb.addHreg(REG_ESP32_READY, reg_esp32_ready); // ESP32 Ready flag (Fix 2)
 
   // Set callbacks
   mb.onSetHreg(REG_COMMAND, cbWrite);         // Callback saat Master write command
@@ -503,7 +512,21 @@ void setup() {
   Serial.println("  0x0003: Error Code (0-6)");
   Serial.println("  0x0004: Photo ID (integer: 1, 2, 3, ...)");
   Serial.println("  0x0005: Group ID (integer: 1, 1, 2, 2, ...)");
-  Serial.println("\n[System] Ready to receive Modbus commands from STM32!\n");
+  Serial.println("  0x0006: ESP32 Ready (0=not ready, 1=ready)");
+
+  // ===================================================================
+  // FIX 2: Set READY flag after all initialization complete
+  // This allows STM32 to wait until ESP32 is fully initialized
+  // ===================================================================
+  reg_esp32_ready = 1;  // Signal to STM32 that we're ready
+  mb.Hreg(REG_ESP32_READY, reg_esp32_ready);
+
+  Serial.println("\n========================================");
+  Serial.println("ESP32-CAM FULLY INITIALIZED AND READY!");
+  Serial.println("========================================");
+  Serial.println("[System] WiFi connected, Session ID fetched, Camera ready");
+  Serial.println("[System] Modbus slave active - Ready to receive commands from STM32");
+  Serial.println("========================================\n");
 }
 
 // Function untuk capture dan upload image + metadata
@@ -524,11 +547,41 @@ void captureAndUpload() {
     return;
   }
 
+  // ===================================================================
+  // IDEMPOTENCY CHECK (Fix for duplicate command bug)
+  // If this photo_id was already completed, return SUCCESS immediately
+  // This prevents re-capturing if STM32 times out and retries
+  // ===================================================================
+  if (photo_id <= last_completed_photo_id) {
+    Serial.println("\n========================================");
+    Serial.printf("⚠️  [Idempotency] Photo ID %d already completed!\n", photo_id);
+    Serial.printf("[Idempotency] Last completed ID: %d\n", last_completed_photo_id);
+    Serial.println("[Idempotency] Returning SUCCESS immediately (no re-capture)");
+    Serial.println("========================================\n");
+
+    // Set SUCCESS status immediately
+    reg_status = STATUS_SUCCESS;
+    reg_error_code = ERR_NONE;
+    mb.Hreg(REG_STATUS, reg_status);
+    mb.Hreg(REG_ERROR_CODE, reg_error_code);
+
+    // Process Modbus extensively to ensure STM32 can read status
+    Serial.println("[Modbus] Processing Modbus for 2 seconds to ensure STM32 can read status...");
+    for (int i = 0; i < 200; i++) {
+      mb.task();
+      delay(10);
+    }
+
+    Serial.println("[Idempotency] Status ready for polling. Exiting without capture.\n");
+    return;  // Skip actual capture/upload
+  }
+
   // Format photo_id ke string "001", "002", etc.
   char photo_id_str[8];
   sprintf(photo_id_str, "%03d", photo_id);
 
-  Serial.printf("[Task] Photo ID: %d (%s)\n", photo_id, photo_id_str);
+  Serial.printf("[Task] Photo ID: %d (%s) - NEW (last completed: %d)\n",
+                photo_id, photo_id_str, last_completed_photo_id);
   Serial.printf("[Task] Group ID: %d\n", group_id);
   Serial.printf("[Task] Session ID: %s\n", current_session_id.c_str());
 
@@ -646,6 +699,13 @@ void captureAndUpload() {
   mb.Hreg(REG_STATUS, reg_status);
   mb.Hreg(REG_ERROR_CODE, reg_error_code);
   Serial.printf("[Status] Updated: Final status=0x%04X, error=0x%04X\n", reg_status, reg_error_code);
+
+  // ===================================================================
+  // UPDATE LAST COMPLETED PHOTO ID (Idempotency tracking)
+  // Only update after successful upload to prevent duplicate captures
+  // ===================================================================
+  last_completed_photo_id = photo_id;
+  Serial.printf("[Idempotency] Updated last_completed_photo_id: %d\n", last_completed_photo_id);
 
   // Reset command register
   reg_command = CMD_IDLE;

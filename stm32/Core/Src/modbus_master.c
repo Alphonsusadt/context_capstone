@@ -28,6 +28,19 @@ void ModbusMaster_Init(ModbusMaster_t *modbus, UART_HandleTypeDef *huart, uint32
 }
 
 /**
+ * @brief Flush UART RX buffer (Fix 4: Clear stale data)
+ * This prevents CRC errors from old/corrupt data in buffer
+ */
+void ModbusMaster_FlushRxBuffer(UART_HandleTypeDef *huart)
+{
+    uint8_t dummy;
+    // Read and discard any pending data in RX buffer (with short timeout)
+    while (HAL_UART_Receive(huart, &dummy, 1, 10) == HAL_OK) {
+        // Empty loop - just draining the buffer
+    }
+}
+
+/**
  * @brief Calculate Modbus CRC16
  * CRC16-MODBUS (Polynomial: 0xA001, Init: 0xFFFF, RefIn: true, RefOut: true)
  */
@@ -237,14 +250,33 @@ int ModbusMaster_WaitForCompletion(ModbusMaster_t *modbus, uint32_t max_wait_ms)
 {
     uint32_t start_tick = HAL_GetTick();
     uint16_t status = STATUS_IDLE;
+    uint8_t consecutive_errors = 0;
+    const uint8_t MAX_CONSECUTIVE_ERRORS = 5;  // Allow up to 5 consecutive errors before giving up
 
     while ((HAL_GetTick() - start_tick) < max_wait_ms) {
         // Read status register
         int result = ModbusMaster_ReadStatus(modbus, &status);
 
+        // ===================================================================
+        // CRITICAL FIX: Don't exit immediately on communication errors
+        // Allow retries for transient errors (ESP32 busy during init/upload)
+        // Only exit if too many consecutive errors (complete comm failure)
+        // ===================================================================
         if (result != MODBUS_OK) {
-            return result;  // Communication error
+            consecutive_errors++;
+
+            if (consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
+                // Too many consecutive errors - complete communication failure
+                return result;
+            }
+
+            // Transient error, retry after delay
+            HAL_Delay(200);
+            continue;
         }
+
+        // Communication successful, reset error counter
+        consecutive_errors = 0;
 
         // Check status
         if (status == STATUS_SUCCESS) {
@@ -257,6 +289,6 @@ int ModbusMaster_WaitForCompletion(ModbusMaster_t *modbus, uint32_t max_wait_ms)
         HAL_Delay(200);  // Poll every 200ms (increased frequency for Azure HTTPS latency)
     }
 
-    // Timeout
+    // Timeout - exceeded max_wait_ms
     return MODBUS_ERR_TIMEOUT;
 }
