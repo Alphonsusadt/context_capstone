@@ -80,9 +80,9 @@ static void MX_USART3_UART_Init(void);
 
 /* USER CODE BEGIN PFP */
 
-// --- FUNGSI BANTU UNTUK WIFI (LOGIKA ASLI ANDA) ---
-bool send_and_receive(const char *cmd, uint32_t delay_ms);
-bool ESP01_ConnectWiFi(const char *ssid, const char *password);
+// --- FUNGSI BANTU UNTUK WIFI (DEPRECATED - esp-link handles WiFi now) ---
+// bool send_and_receive(const char *cmd, uint32_t delay_ms);
+// bool ESP01_ConnectWiFi(const char *ssid, const char *password);
 // -----------------------------
 
 /* USER CODE END PFP */
@@ -94,19 +94,22 @@ bool ESP01_ConnectWiFi(const char *ssid, const char *password);
 // Deklarasikan huart1 agar dikenal di fungsi ini
 extern UART_HandleTypeDef huart1;
 
-// Fungsi _write untuk printf ke UART1
+// Fungsi _write untuk printf ke UART1 (USB-TTL) dan UART2 (WiFi ESP-01)
+// Sekarang serial output keluar ke 2 tempat: USB debug + WiFi esp-link
 int _write(int file, char *ptr, int len)
 {
   (void)file; // Tidak digunakan
-  HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, 100);
+  HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, 100); // USB-TTL debug (115200 baud)
+  HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, 100); // WiFi esp-link (115200 baud)
   return len;
 }
 
 
 
 // =================================================================
-// == FUNGSI WIFI ESP01 (Menggunakan UART2) -- VERSI bool (POLLING AKTIF) ==
+// == FUNGSI WIFI ESP01 (DEPRECATED - esp-link firmware handles all WiFi) ==
 // =================================================================
+/*
 bool send_at_command(const char* cmd, const char* expected_response, uint32_t timeout)
 {
     memset(wifi_rx_buffer, '\0', WIFI_RX_BUFFER_SIZE); // Kosongkan buffer utama
@@ -175,6 +178,7 @@ bool ESP01_ConnectWiFi(const char *ssid, const char *password) {
     printf("WiFi Terhubung dan Mendapat IP!\r\n");
     return true;
 }
+*/
 /* USER CODE END 0 */
 
 /**
@@ -221,35 +225,16 @@ int main(void)
   // HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
 
   // =================================================================
-  // == LOGIKA SETUP WIFI DENGAN PENGECEKAN HASIL (bool) ==
+  // == ESP-01 WIFI SETUP (Using esp-link firmware) ==
+  // == WiFi configuration handled by esp-link web UI ==
+  // == STM32 just sends serial data to UART2, esp-link forwards via WiFi ==
   // =================================================================
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET); // Mulai dengan LED MATI
+  printf("=== ESP-01 (esp-link) Serial-WiFi Bridge Active ===\r\n");
+  printf("=== Access via browser: http://<esp-link-IP> ===\r\n");
+  printf("=== Or Telnet: telnet <esp-link-IP> 23 ===\r\n\r\n");
 
-  printf("=== Memulai koneksi WiFi (ESP-01) ===\r\n");
-
-  // Panggil fungsi koneksi WiFi dan CEK HASILNYA
-  if (ESP01_ConnectWiFi(WIFI_SSID, WIFI_PASS) == true)
-  {
-      // Jika KONEKSI BERHASIL
-      printf("=== WiFi (ESP-01) Berhasil Terhubung! ===\r\n");
-      // Nyalakan LED sebagai indikator sukses
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); // LED NYALA
-      printf("Melanjutkan ke program utama (Modbus komunikasi ke ESP32-CAM)...\r\n\r\n");
-  }
-  else
-  {
-      // Jika KONEKSI GAGAL
-      printf("=== WiFi (ESP-01) GAGAL Terhubung! ===\r\n");
-      printf("Program berhenti. Cek SSID/Password/Sinyal/Koneksi ESP-01.\r\n");
-
-      // Hentikan program jika WiFi STM32 gagal.
-      // LED akan berkedip sebagai tanda error.
-      while(1)
-      {
-          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // Blink LED error
-          HAL_Delay(100); // Kedip cepat
-      }
-  }
+  // LED indicator: System ready
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); // LED NYALA (system ready)
   /* USER CODE END 2 */
 
   /* Infinite loop */
