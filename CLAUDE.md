@@ -1,8 +1,8 @@
 # Autonomous Robot for Borobudur Temple Relief Documentation
 
-**Project Status:** ✅ **PHASE 1 COMPLETED** (Communication System + Error Handling) | ⏳ **PHASE 2 NEXT** (Robot Navigation)
+**Project Status:** ✅ **PHASE 1 COMPLETED** (Communication System + Error Handling + Button Control) | ⏳ **PHASE 2 NEXT** (Robot Navigation)
 
-**Last Updated:** 2025-11-04
+**Last Updated:** 2025-11-06
 
 ---
 
@@ -59,6 +59,68 @@ Build an **autonomous mobile robot** that can:
 
 ---
 
+## 🎮 Button Control System (November 2025)
+
+### Hardware:
+- **GREEN button (START)**: PC14 → GND (Active LOW with internal pull-up)
+- **RED button (STOP)**: PC15 → GND (Active LOW with internal pull-up)
+
+### Button Logic:
+- **Active LOW** with internal pull-up resistor
+- **Debounce**: 50ms
+- **GREEN**: Blocking wait at startup (must press to start capture)
+- **RED**: Non-blocking check in capture loop (press anytime to stop)
+
+### System Flow with Buttons:
+```
+[Power ON STM32]
+    ↓
+[Init all peripherals + WiFi esp-link]
+    ↓
+[Wait ESP32-CAM READY flag 0x0006]
+    ↓
+[Set Group ID once]
+    ↓
+[LED ON solid → System ready]
+    ↓
+[Wait GREEN BUTTON press] ← User must press to start
+    ↓ (button pressed)
+[Start CAPTURE LOOP]
+    ↓
+    while (1) {
+      [Check RED BUTTON] ← Press anytime to stop
+        ↓ (if pressed)
+        [Send END_SESSION to ESP32]
+        [ESP32 hits /session/end API]
+        [Exit loop → Idle mode]
+
+      [Check ENABLE_PHOTO_LIMIT] ← Testing mode
+        ↓ (if limit reached)
+        [Exit loop → Idle mode]
+
+      [Capture & Upload photo]
+      [Increment counter]
+      [Delay 5s]
+    }
+    ↓
+[Idle Mode: LED blink slow]
+[Print: "Press RESET to restart"]
+```
+
+### Button Response Time:
+- **GREEN button**: Instant (blocking wait)
+- **RED button**: 5-15 seconds delay (waits for current photo to finish upload)
+  - This is **safe** - no data corruption, current photo completes successfully
+  - User sees progress in serial monitor during wait
+
+### Modbus Register for Session Control:
+- **0x0007: SESSION_CONTROL**
+  - Write `2`: END_SESSION command
+  - ESP32 calls `POST /session/end` API
+  - Marks session as completed in backend
+
+---
+
 ## 🔧 Hardware Setup
 
 ### Pin Connections:
@@ -70,6 +132,11 @@ STM32F407VG ──────────────────── ESP32-C
 
   PA9 (USART1 TX)  ───────► USB-TTL RX (Debug, 115200)
   PA10 (USART1 RX) ◄────── USB-TTL TX
+
+STM32F407VG ──────────────────── Buttons
+  PC14 (GPIO Input)  ──────► GREEN button → GND
+  PC15 (GPIO Input)  ──────► RED button → GND
+  (Internal pull-up enabled)
 ```
 
 ### Components:
@@ -110,6 +177,7 @@ STM32F407VG ──────────────────── ESP32-C
 | 0x0004 | PHOTO_ID | R/W | 1, 2, 3... | Current photo number |
 | 0x0005 | GROUP_ID | R/W | 1, 2, 3... | Group classification |
 | 0x0006 | ESP32_READY | R | 0=not ready, 1=ready | Initialization flag |
+| 0x0007 | SESSION_CONTROL | R/W | 0=IDLE, 2=END_SESSION | Session control (RED button) |
 
 ---
 

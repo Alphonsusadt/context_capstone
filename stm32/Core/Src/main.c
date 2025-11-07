@@ -85,6 +85,11 @@ static void MX_USART3_UART_Init(void);
 // bool ESP01_ConnectWiFi(const char *ssid, const char *password);
 // -----------------------------
 
+// --- BUTTON CONTROL FUNCTIONS ---
+uint8_t read_green_button(void);  // Returns 1 if pressed, 0 if not
+uint8_t read_red_button(void);    // Returns 1 if pressed, 0 if not
+// -----------------------------
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -104,7 +109,36 @@ int _write(int file, char *ptr, int len)
   return len;
 }
 
+// =================================================================
+// == BUTTON CONTROL FUNCTIONS ==
+// Active LOW buttons with internal pull-up (pressed = 0, not pressed = 1)
+// =================================================================
 
+// Read GREEN button (PC0)
+// Returns 1 if pressed, 0 if not pressed
+uint8_t read_green_button(void) {
+    // Active LOW: Button pressed = GPIO_PIN_RESET (0)
+    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_0) == GPIO_PIN_RESET) {
+        HAL_Delay(50);  // Debounce 50ms
+        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_0) == GPIO_PIN_RESET) {
+            return 1;  // Pressed
+        }
+    }
+    return 0;  // Not pressed
+}
+
+// Read RED button (PC2)
+// Returns 1 if pressed, 0 if not pressed
+uint8_t read_red_button(void) {
+    // Active LOW: Button pressed = GPIO_PIN_RESET (0)
+    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_2) == GPIO_PIN_RESET) {
+        HAL_Delay(50);  // Debounce 50ms
+        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_2) == GPIO_PIN_RESET) {
+            return 1;  // Pressed
+        }
+    }
+    return 0;  // Not pressed
+}
 
 // =================================================================
 // == FUNGSI WIFI ESP01 (DEPRECATED - esp-link firmware handles all WiFi) ==
@@ -275,7 +309,7 @@ int main(void)
                                                       &esp32_ready);
 
       if (result == MODBUS_OK && esp32_ready == 1) {
-          printf("✅ [Startup] ESP32-CAM is READY! Starting capture sequence...\r\n\r\n");
+          printf("[Startup] ESP32-CAM is READY! Starting capture sequence...\r\n\r\n");
           break;  // ESP32 ready, exit wait loop
       }
 
@@ -293,7 +327,7 @@ int main(void)
 
       // Optional: Timeout after 60 seconds (30 checks)
       if (ready_check_count >= 30) {
-          printf("\r\n⚠️  [Startup] WARNING: ESP32-CAM tidak ready setelah 60 detik!\r\n");
+          printf("\r\n[Startup] WARNING: ESP32-CAM tidak ready setelah 60 detik!\r\n");
           printf("[Startup] Proceeding anyway, but first capture may fail.\r\n\r\n");
           break;
       }
@@ -318,8 +352,19 @@ int main(void)
   }
 
   printf("========================================\r\n");
-  printf("✅ READY TO START CAPTURE LOOP\r\n");
+  printf("[System] READY TO START CAPTURE\r\n");
+  printf("[System] Press GREEN button to begin...\r\n");
   printf("========================================\r\n\r\n");
+
+  // ===================================================================
+  // WAIT FOR GREEN BUTTON PRESS (Blocking wait)
+  // User must press GREEN button to start capture sequence
+  // ===================================================================
+  while (!read_green_button()) {
+      HAL_Delay(100);  // Check every 100ms
+  }
+
+  printf("[System] GREEN button pressed! Starting capture sequence...\r\n\r\n");
 
 while (1)
 {
@@ -339,6 +384,45 @@ while (1)
         break;  // Exit main loop
     }
 #endif
+
+    // =================================================================
+    // CHECK RED BUTTON FOR MANUAL STOP (Non-blocking)
+    // User can press RED button anytime to end session
+    // =================================================================
+    if (read_red_button()) {
+        printf("\r\n========================================\r\n");
+        printf("[System] RED button pressed! Stopping session...\r\n");
+        printf("========================================\r\n\r\n");
+
+        // Send END_SESSION command to ESP32-CAM
+        printf("[Modbus] Sending END_SESSION command to ESP32-CAM...\r\n");
+
+        // Flush buffer before command
+        ModbusMaster_FlushRxBuffer(modbus_master.huart);
+
+        int result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                                       MODBUS_SLAVE_ADDR,
+                                                       0x0007,  // SESSION_CONTROL register
+                                                       2);      // END_SESSION command
+
+        if (result == MODBUS_OK) {
+            printf("[Modbus] END_SESSION command sent successfully.\r\n");
+            printf("[Modbus] Waiting for ESP32 to complete API call...\r\n");
+            HAL_Delay(3000);  // Wait for ESP32 to call /session/end API
+            printf("[Modbus] Session ended.\r\n");
+        } else {
+            printf("[Modbus] WARNING: Failed to send END_SESSION (Error: %d)\r\n", result);
+            printf("[Modbus] Proceeding to stop anyway.\r\n");
+        }
+
+        printf("\r\n========================================\r\n");
+        printf("[System] SESSION ENDED\r\n");
+        printf("[System] Total photos captured: %d\r\n", photo_counter - 1);
+        printf("[System] Press RESET button to restart.\r\n");
+        printf("========================================\r\n\r\n");
+
+        break;  // Exit capture loop
+    }
 
     // =================================================================
     // STEP 1: Send Photo ID and Group ID to ESP32-CAM
@@ -634,6 +718,12 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /*Configure GPIO pins : PC0 (GREEN button) and PC2 (RED button) */
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;  // Active LOW with pull-up
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 /* USER CODE END MX_GPIO_Init_2 */
 }

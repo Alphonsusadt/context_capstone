@@ -11,6 +11,10 @@
  * - 0x0001: Command Register (1=CAPTURE, 0=IDLE)
  * - 0x0002: Status Register (0=IDLE, 1=BUSY, 2=SUCCESS, 3=ERROR)
  * - 0x0003: Error Code Register
+ * - 0x0004: Photo ID Register
+ * - 0x0005: Group ID Register
+ * - 0x0006: ESP32 Ready Flag (0=not ready, 1=ready)
+ * - 0x0007: Session Control (0=IDLE, 2=END_SESSION)
  **************************************************************/
 
 #include "esp_camera.h"
@@ -33,12 +37,14 @@ const char* password = "123456781";
   const char* serverURL_session = "https://test-capstone-backend-azure.vercel.app/session/current";
   const char* serverURL_image = "https://test-capstone-backend-azure.vercel.app/upload/image";
   const char* serverURL_meta = "https://test-capstone-backend-azure.vercel.app/upload/meta";
+  const char* serverURL_session_end = "https://test-capstone-backend-azure.vercel.app/session/end";
   #define SERVER_MODE "PRODUCTION (Azure)"
 #else
   // DEVELOPMENT: Local Flask Server
   const char* serverURL_session = "http://10.32.207.112:5000/session/current";
   const char* serverURL_image = "http://10.32.207.112:5000/upload/image";
   const char* serverURL_meta = "http://10.32.207.112:5000/upload/meta";
+  const char* serverURL_session_end = "http://10.32.207.112:5000/session/end";
   #define SERVER_MODE "DEVELOPMENT (Local)"
 #endif
 
@@ -56,10 +62,12 @@ const char* password = "123456781";
 #define REG_PHOTO_ID        0x0004  // Photo ID (integer: 1, 2, 3, ...)
 #define REG_GROUP_ID        0x0005  // Group ID (integer: 1, 1, 2, 2, ...)
 #define REG_ESP32_READY     0x0006  // ESP32 Ready flag (Fix 2: Handshake)
+#define REG_SESSION_CONTROL 0x0007  // Session control (0=IDLE, 2=END_SESSION)
 
 // Command Values
 #define CMD_IDLE            0x0000
 #define CMD_CAPTURE         0x0001
+#define CMD_END_SESSION     0x0002  // End session command (for REG_SESSION_CONTROL)
 
 // Status Values
 #define STATUS_IDLE         0x0000
@@ -129,6 +137,13 @@ uint16_t cbWrite(TRegister* reg, uint16_t val) {
   else if (addr == REG_GROUP_ID) {
     reg_group_id = val;
     Serial.printf("[Modbus] Group ID set to: %d\n", val);
+  }
+  // Handle session control register write
+  else if (addr == REG_SESSION_CONTROL) {
+    if (val == CMD_END_SESSION) {
+      Serial.println("[Modbus] END_SESSION command received from STM32");
+      endSession();  // Call session end function
+    }
   }
 
   return val; // Return value yang ditulis
@@ -495,11 +510,13 @@ void setup() {
   mb.addHreg(REG_PHOTO_ID, reg_photo_id);     // Photo ID register
   mb.addHreg(REG_GROUP_ID, reg_group_id);     // Group ID register
   mb.addHreg(REG_ESP32_READY, reg_esp32_ready); // ESP32 Ready flag (Fix 2)
+  mb.addHreg(REG_SESSION_CONTROL, 0);         // Session control register
 
   // Set callbacks
   mb.onSetHreg(REG_COMMAND, cbWrite);         // Callback saat Master write command
   mb.onSetHreg(REG_PHOTO_ID, cbWrite);        // Callback saat Master write photo_id
   mb.onSetHreg(REG_GROUP_ID, cbWrite);        // Callback saat Master write group_id
+  mb.onSetHreg(REG_SESSION_CONTROL, cbWrite); // Callback saat Master write session control
   mb.onGetHreg(REG_STATUS, cbRead);           // Callback saat Master read status
   mb.onGetHreg(REG_ERROR_CODE, cbRead);       // Callback saat Master read error code
   mb.onGetHreg(REG_PHOTO_ID, cbRead);         // Callback saat Master read photo_id
@@ -720,6 +737,55 @@ void captureAndUpload() {
   }
 
   Serial.println("[Task] ===== Task finished, status ready for polling =====\n");
+}
+
+// =====================================================================
+// == END SESSION FUNCTION ==
+// Hit backend API to mark session as completed
+// Called when RED button pressed on STM32
+// =====================================================================
+void endSession() {
+  Serial.println("[Session] ========================================");
+  Serial.println("[Session] Ending current session...");
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Session] ERROR: WiFi disconnected, cannot end session");
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip SSL verification (same as other requests)
+
+  HTTPClient http;
+  http.begin(client, serverURL_session_end);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);  // 5 second timeout
+
+  Serial.print("[Session] POSTing to: ");
+  Serial.println(serverURL_session_end);
+
+  // Send empty POST request
+  int httpCode = http.POST("");
+
+  if (httpCode > 0) {
+    Serial.printf("[Session] HTTP Response: %d\n", httpCode);
+
+    if (httpCode == 200) {
+      String response = http.getString();
+      Serial.println("[Session] SUCCESS: Session ended successfully");
+      Serial.println("[Session] Response:");
+      Serial.println(response);
+    } else {
+      Serial.printf("[Session] WARNING: Unexpected status code %d\n", httpCode);
+      String response = http.getString();
+      Serial.println(response);
+    }
+  } else {
+    Serial.printf("[Session] ERROR: HTTP request failed (%s)\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+  Serial.println("[Session] ========================================");
 }
 
 void loop() {
