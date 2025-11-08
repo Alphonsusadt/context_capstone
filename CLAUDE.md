@@ -2,7 +2,7 @@
 
 **Project Status:** ✅ **PHASE 1 COMPLETED** (Communication System + Error Handling + Button Control) | ⏳ **PHASE 2 NEXT** (Robot Navigation)
 
-**Last Updated:** 2025-11-06
+**Last Updated:** 2025-11-08
 
 ---
 
@@ -46,12 +46,13 @@ Build an **autonomous mobile robot** that can:
 - ✅ Status reporting and error handling
 - ✅ Testing mode (configurable photo limits)
 
-### Recent Fixes (2025-11-04):
+### Recent Fixes (2025-11-04 to 2025-11-08):
 - ✅ **Initialization race condition** - STM32 waits for ESP32 READY flag
 - ✅ **Timeout bug** - Now properly waits 90 seconds (was exiting after 1s)
 - ✅ **Backend optimization** - Azure responds in <1s (was 3-15s)
 - ✅ **Idempotency protection** - Prevents duplicate captures on retry
 - ✅ **UART buffer flush** - Prevents CRC errors from stale data
+- ✅ **Button control responsiveness** - RED button checked every 200ms during upload (was once per cycle)
 
 ### Success Rate:
 - **Before fixes:** ~50% (3/6 attempts, many CRC/timeout errors)
@@ -62,14 +63,14 @@ Build an **autonomous mobile robot** that can:
 ## 🎮 Button Control System (November 2025)
 
 ### Hardware:
-- **GREEN button (START)**: PC14 → GND (Active LOW with internal pull-up)
-- **RED button (STOP)**: PC15 → GND (Active LOW with internal pull-up)
+- **GREEN button (START)**: PC0 → GND (Active LOW with internal pull-up)
+- **RED button (STOP)**: PC2 → GND (Active LOW with internal pull-up)
 
 ### Button Logic:
 - **Active LOW** with internal pull-up resistor
 - **Debounce**: 50ms
 - **GREEN**: Blocking wait at startup (must press to start capture)
-- **RED**: Non-blocking check in capture loop (press anytime to stop)
+- **RED**: Checked every 100-200ms (responsive abort anytime during operation)
 
 ### System Flow with Buttons:
 ```
@@ -109,9 +110,9 @@ Build an **autonomous mobile robot** that can:
 
 ### Button Response Time:
 - **GREEN button**: Instant (blocking wait)
-- **RED button**: 5-15 seconds delay (waits for current photo to finish upload)
-  - This is **safe** - no data corruption, current photo completes successfully
-  - User sees progress in serial monitor during wait
+- **RED button**: < 200ms (checked during upload, delay, and all operations)
+  - Responsive even during 90-second Azure upload
+  - Safe abort - sends END_SESSION command before stopping
 
 ### Modbus Register for Session Control:
 - **0x0007: SESSION_CONTROL**
@@ -134,8 +135,8 @@ STM32F407VG ──────────────────── ESP32-C
   PA10 (USART1 RX) ◄────── USB-TTL TX
 
 STM32F407VG ──────────────────── Buttons
-  PC14 (GPIO Input)  ──────► GREEN button → GND
-  PC15 (GPIO Input)  ──────► RED button → GND
+  PC0 (GPIO Input)  ───────► GREEN button → GND
+  PC2 (GPIO Input)  ───────► RED button → GND
   (Internal pull-up enabled)
 ```
 

@@ -34,7 +34,7 @@
 // Set ENABLE_PHOTO_LIMIT to 1 for testing (captures MAX_PHOTOS then stops)
 // Set ENABLE_PHOTO_LIMIT to 0 for production (infinite loop)
 #define ENABLE_PHOTO_LIMIT  1      // 1 = testing mode, 0 = production mode
-#define MAX_PHOTOS          3     // Maximum photos to capture (ignored if ENABLE_PHOTO_LIMIT = 0)
+#define MAX_PHOTOS          10     // Maximum photos to capture (ignored if ENABLE_PHOTO_LIMIT = 0)
 
 /* USER CODE END PD */
 
@@ -88,6 +88,9 @@ static void MX_USART3_UART_Init(void);
 // --- BUTTON CONTROL FUNCTIONS ---
 uint8_t read_green_button(void);  // Returns 1 if pressed, 0 if not
 uint8_t read_red_button(void);    // Returns 1 if pressed, 0 if not
+
+// --- BUTTON-AWARE MODBUS FUNCTION ---
+int ModbusMaster_WaitForCompletion_WithButton(ModbusMaster_t *modbus, uint32_t max_wait_ms);
 // -----------------------------
 
 /* USER CODE END PFP */
@@ -138,6 +141,61 @@ uint8_t read_red_button(void) {
         }
     }
     return 0;  // Not pressed
+}
+
+// =================================================================
+// BUTTON-AWARE WAIT FOR COMPLETION
+// Modified version of ModbusMaster_WaitForCompletion that checks
+// RED button every 200ms, allowing user to abort during upload
+// =================================================================
+#define MODBUS_ERR_USER_ABORT -10  // User pressed RED button
+
+int ModbusMaster_WaitForCompletion_WithButton(ModbusMaster_t *modbus, uint32_t max_wait_ms)
+{
+    uint32_t start_tick = HAL_GetTick();
+    uint16_t status = STATUS_IDLE;
+    uint8_t consecutive_errors = 0;
+    const uint8_t MAX_CONSECUTIVE_ERRORS = 5;
+
+    while ((HAL_GetTick() - start_tick) < max_wait_ms) {
+        // ===================================================================
+        // CHECK RED BUTTON EVERY ITERATION (every 200ms)
+        // This makes RED button super responsive even during 90s upload!
+        // ===================================================================
+        if (read_red_button()) {
+            printf("[System] RED button pressed during upload! Aborting...\r\n");
+            return MODBUS_ERR_USER_ABORT;  // Signal user abort
+        }
+
+        // Read status register
+        int result = ModbusMaster_ReadStatus(modbus, &status);
+
+        // Handle communication errors (allow retries for transient errors)
+        if (result != MODBUS_OK) {
+            consecutive_errors++;
+            if (consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
+                return result;  // Communication failure
+            }
+            HAL_Delay(200);
+            continue;
+        }
+
+        // Communication successful, reset error counter
+        consecutive_errors = 0;
+
+        // Check status
+        if (status == STATUS_SUCCESS) {
+            return MODBUS_OK;  // Success!
+        } else if (status == STATUS_ERROR) {
+            return MODBUS_ERR_EXCEPTION;  // Slave reported error
+        }
+
+        // Status is IDLE or BUSY, wait and retry
+        HAL_Delay(200);  // Poll every 200ms
+    }
+
+    // Timeout - exceeded max_wait_ms
+    return MODBUS_ERR_TIMEOUT;
 }
 
 // =================================================================
@@ -445,7 +503,15 @@ while (1)
                                                    photo_counter);
     if (result != MODBUS_OK) {
         printf("[Modbus] ERROR: Gagal set Photo ID (Error code: %d)\r\n", result);
-        HAL_Delay(5000);
+
+        // Button-aware error recovery delay (5 seconds)
+        for (int i = 0; i < 50; i++) {
+            if (read_red_button()) {
+                printf("[System] RED button pressed during error recovery. Aborting...\r\n");
+                goto exit_capture_loop;
+            }
+            HAL_Delay(100);
+        }
         continue;
     }
     printf("[Modbus] Photo ID set successfully.\r\n");
@@ -468,7 +534,15 @@ while (1)
         } else if (result == MODBUS_ERR_EXCEPTION) {
             printf("  -> Modbus Exception! ESP32-CAM menolak request.\r\n");
         }
-        HAL_Delay(5000);
+
+        // Button-aware error recovery delay (5 seconds)
+        for (int i = 0; i < 50; i++) {
+            if (read_red_button()) {
+                printf("[System] RED button pressed during error recovery. Aborting...\r\n");
+                goto exit_capture_loop;
+            }
+            HAL_Delay(100);
+        }
         continue; // Skip ke iterasi berikutnya
     }
 
@@ -476,10 +550,12 @@ while (1)
 
     // =================================================================
     // STEP 3: Poll status sampai selesai (max 90 detik for Azure upload)
+    // RED button checked every 200ms during this wait!
     // =================================================================
     printf("[Modbus] Polling status ESP32-CAM (max 90 detik)...\r\n");
+    printf("[Modbus] RED button can abort anytime during upload!\r\n");
 
-    result = ModbusMaster_WaitForCompletion(&modbus_master, 90000); // 90 detik timeout (Azure HTTPS + idempotency buffer)
+    result = ModbusMaster_WaitForCompletion_WithButton(&modbus_master, 90000); // 90 detik timeout + button check every 200ms
 
     if (result == MODBUS_OK) {
         printf("[Modbus] SUCCESS! ESP32-CAM selesai capture & upload.\r\n");
@@ -488,6 +564,29 @@ while (1)
         // Increment photo counter untuk foto berikutnya
         photo_counter++;
         printf("[Counter] Photo counter incremented to: %d\r\n", photo_counter);
+
+    } else if (result == MODBUS_ERR_USER_ABORT) {
+        // RED button pressed during upload!
+        printf("[Modbus] USER ABORT! RED button pressed during upload.\r\n");
+        printf("[System] Stopping capture session...\r\n");
+
+        // Send END_SESSION command to ESP32-CAM
+        printf("[Modbus] Sending END_SESSION command to ESP32-CAM...\r\n");
+        ModbusMaster_FlushRxBuffer(modbus_master.huart);
+        int end_result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                                           MODBUS_SLAVE_ADDR,
+                                                           0x0007,  // SESSION_CONTROL register
+                                                           2);      // END_SESSION command
+        if (end_result == MODBUS_OK) {
+            printf("[Modbus] END_SESSION sent successfully.\r\n");
+            HAL_Delay(3000);  // Wait for API call
+        }
+
+        printf("\r\n========================================\r\n");
+        printf("[System] SESSION ENDED BY USER\r\n");
+        printf("[System] Total photos captured: %d\r\n", photo_counter - 1);
+        printf("========================================\r\n\r\n");
+        break;  // Exit capture loop
 
     } else if (result == MODBUS_ERR_TIMEOUT) {
         printf("[Modbus] TIMEOUT! ESP32-CAM tidak selesai dalam 90 detik.\r\n");
@@ -534,10 +633,45 @@ while (1)
     //
     // For now, group_id stays constant at 1 (single straight corridor)
 
-    // Tunggu 5 detik sebelum perintah berikutnya
+    // =================================================================
+    // STEP 5: Wait 5 seconds before next capture (with RED button check)
+    // Check RED button every 100ms during this delay
+    // =================================================================
     printf("\r\nMenunggu 5 detik sebelum capture berikutnya...\r\n");
-    HAL_Delay(5000);
+    printf("[System] RED button can abort during this delay!\r\n");
+
+    // Button-aware delay: 5000ms = 50 iterations x 100ms
+    for (int i = 0; i < 50; i++) {
+        if (read_red_button()) {
+            printf("\r\n========================================\r\n");
+            printf("[System] RED button pressed during delay! Stopping...\r\n");
+            printf("========================================\r\n\r\n");
+
+            // Send END_SESSION command
+            printf("[Modbus] Sending END_SESSION command to ESP32-CAM...\r\n");
+            ModbusMaster_FlushRxBuffer(modbus_master.huart);
+            int end_result = ModbusMaster_WriteSingleRegister(&modbus_master,
+                                                               MODBUS_SLAVE_ADDR,
+                                                               0x0007,  // SESSION_CONTROL
+                                                               2);      // END_SESSION
+            if (end_result == MODBUS_OK) {
+                printf("[Modbus] END_SESSION sent successfully.\r\n");
+                HAL_Delay(3000);
+            }
+
+            printf("\r\n========================================\r\n");
+            printf("[System] SESSION ENDED BY USER\r\n");
+            printf("[System] Total photos captured: %d\r\n", photo_counter - 1);
+            printf("========================================\r\n\r\n");
+
+            // Exit main loop by jumping to end of while(1)
+            goto exit_capture_loop;
+        }
+        HAL_Delay(100);  // 100ms per iteration
+    }
 }
+
+exit_capture_loop:  // Label for exiting capture loop from delay
 
   // Idle mode after photo limit reached (only executed if ENABLE_PHOTO_LIMIT = 1)
   printf("\r\n[System] Entering idle mode...\r\n");
