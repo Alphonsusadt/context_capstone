@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(xcopy:*)",
+      "Bash(robocopy:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
