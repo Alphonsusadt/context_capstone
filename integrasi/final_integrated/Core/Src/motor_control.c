@@ -14,6 +14,7 @@
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim9;
+extern TIM_HandleTypeDef htim12;
 
 /* Private variables ---------------------------------------------------------*/
 Motor_TypeDef motors[MOTOR_COUNT];
@@ -28,45 +29,47 @@ static uint16_t speed_to_duty(int16_t speed);
   * @retval None
   */
 void Motor_Init(void) {
-    // Motor 1: TIM2 CH1 (PA0)
-    // Note: For single-channel testing, use same channel for both RPWM/LPWM
-    motors[MOTOR_1].htim = &htim2;
-    motors[MOTOR_1].channel_rpwm = TIM_CHANNEL_1;
-    motors[MOTOR_1].channel_lpwm = TIM_CHANNEL_1;  // Same channel (no direction control yet)
+    // Motor 1 (B - Kanan Depan): TIM9 CH1+CH2 (PE5/PE6) - Full H-bridge control
+    motors[MOTOR_1].htim = &htim9;
+    motors[MOTOR_1].channel_rpwm = TIM_CHANNEL_1;  // PE5 - RPWM (forward)
+    motors[MOTOR_1].channel_lpwm = TIM_CHANNEL_2;  // PE6 - LPWM (reverse)
     motors[MOTOR_1].current_speed = 0;
     motors[MOTOR_1].direction = MOTOR_DIR_STOP;
     motors[MOTOR_1].is_initialized = true;
 
-    // Motor 2: TIM3 CH3 (PB0)
-    motors[MOTOR_2].htim = &htim3;
-    motors[MOTOR_2].channel_rpwm = TIM_CHANNEL_3;
-    motors[MOTOR_2].channel_lpwm = TIM_CHANNEL_3;
+    // Motor 2 (C - Kiri Depan): TIM12 CH1+CH2 (PB14/PB15) - Full H-bridge control
+    motors[MOTOR_2].htim = &htim12;
+    motors[MOTOR_2].channel_rpwm = TIM_CHANNEL_1;  // PB14 - RPWM (forward)
+    motors[MOTOR_2].channel_lpwm = TIM_CHANNEL_2;  // PB15 - LPWM (reverse)
     motors[MOTOR_2].current_speed = 0;
     motors[MOTOR_2].direction = MOTOR_DIR_STOP;
     motors[MOTOR_2].is_initialized = true;
 
-    // Motor 3: TIM3 CH4 (PB1)
+    // Motor 3 (A - Kanan Belakang): TIM3 CH3+CH4 (PB0/PB1) - Full H-bridge control
     motors[MOTOR_3].htim = &htim3;
-    motors[MOTOR_3].channel_rpwm = TIM_CHANNEL_4;
-    motors[MOTOR_3].channel_lpwm = TIM_CHANNEL_4;
+    motors[MOTOR_3].channel_rpwm = TIM_CHANNEL_3;  // PB0 - RPWM (forward)
+    motors[MOTOR_3].channel_lpwm = TIM_CHANNEL_4;  // PB1 - LPWM (reverse)
     motors[MOTOR_3].current_speed = 0;
     motors[MOTOR_3].direction = MOTOR_DIR_STOP;
     motors[MOTOR_3].is_initialized = true;
 
-    // Motor 4: TIM9 CH1+CH2 (PE5, PE6) - Full H-bridge control
-    motors[MOTOR_4].htim = &htim9;
-    motors[MOTOR_4].channel_rpwm = TIM_CHANNEL_1;  // PE5 - RPWM (forward)
-    motors[MOTOR_4].channel_lpwm = TIM_CHANNEL_2;  // PE6 - LPWM (reverse)
+    // Motor 4 (D - Kiri Belakang): TIM2 CH1+CH2 (PA0/PA1) - Full H-bridge control
+    motors[MOTOR_4].htim = &htim2;
+    motors[MOTOR_4].channel_rpwm = TIM_CHANNEL_1;  // PA0 - RPWM (forward)
+    motors[MOTOR_4].channel_lpwm = TIM_CHANNEL_2;  // PA1 - LPWM (reverse)
     motors[MOTOR_4].current_speed = 0;
     motors[MOTOR_4].direction = MOTOR_DIR_STOP;
     motors[MOTOR_4].is_initialized = true;
 
     // Start all PWM channels
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);   // Motor 1 RPWM (PE5)
+    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);   // Motor 1 LPWM (PE6)
+    HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_1);  // Motor 2 RPWM (PB14)
+    HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);  // Motor 2 LPWM (PB15)
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);   // Motor 3 RPWM (PB0)
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);   // Motor 3 LPWM (PB1)
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);   // Motor 4 RPWM (PA0)
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);   // Motor 4 LPWM (PA1)
 
     // Initialize all motors to stopped state
     Motor_Stop_All();
