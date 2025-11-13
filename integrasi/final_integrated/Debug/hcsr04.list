@@ -2753,14 +2753,14 @@ int main(void)
     // Front sensors: US1 (A), US2 (B), US3 (C), US4 (H) - hanya 4 sensor depan
     // ========================================================================
 
-    const float THRESHOLD = 10.0f;  // cm - safety threshold
+    const float THRESHOLD = 10.0f;     // cm - safety threshold
  8001a14:	4bb8      	ldr	r3, [pc, #736]	@ (8001cf8 <main+0x344>)
  8001a16:	62fb      	str	r3, [r7, #44]	@ 0x2c
-    const int16_t TEST_SPEED = 50;  // 50% PWM for testing
- 8001a18:	2332      	movs	r3, #50	@ 0x32
+    const int16_t TEST_SPEED = 20;     // 20% PWM for testing (lebih pelan)
+ 8001a18:	2314      	movs	r3, #20
  8001a1a:	857b      	strh	r3, [r7, #42]	@ 0x2a
-    const uint32_t TEST_DURATION = 3000;  // 3 seconds per test phase
- 8001a1c:	f640 33b8 	movw	r3, #3000	@ 0xbb8
+    const uint32_t TEST_DURATION = 1000;  // 1 second per test phase
+ 8001a1c:	f44f 737a 	mov.w	r3, #1000	@ 0x3e8
  8001a20:	627b      	str	r3, [r7, #36]	@ 0x24
 
     printf("\r\n=== MOTOR TEST START ===\r\n");

@@ -150,9 +150,9 @@ int main(void)
     // Front sensors: US1 (A), US2 (B), US3 (C), US4 (H) - hanya 4 sensor depan
     // ========================================================================
 
-    const float THRESHOLD = 10.0f;  // cm - safety threshold
-    const int16_t TEST_SPEED = 50;  // 50% PWM for testing
-    const uint32_t TEST_DURATION = 3000;  // 3 seconds per test phase
+    const float THRESHOLD = 10.0f;     // cm - safety threshold
+    const int16_t TEST_SPEED = 20;     // 20% PWM for testing (lebih pelan)
+    const uint32_t TEST_DURATION = 1000;  // 1 second per test phase
 
     printf("\r\n=== MOTOR TEST START ===\r\n");
     printf("Test Speed: %d%%, Duration: %lu ms\r\n", TEST_SPEED, TEST_DURATION);
