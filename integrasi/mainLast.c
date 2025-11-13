@@ -141,195 +141,72 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    uint32_t cycle_start = HAL_GetTick();
 
-    // ========================================================================
-    // SIMPLE MOTOR TEST MODE WITH THRESHOLD SAFETY
-    // ========================================================================
-    // Test sequence: RPWM (forward) -> Stop -> LPWM (reverse) -> Stop
-    // Threshold: Stop all motors if obstacle < 10cm detected by front sensors
-    // Front sensors: US1 (A), US2 (B), US3 (C), US4 (H) - hanya 4 sensor depan
-    // ========================================================================
+    // === 1. Trigger all sensors ===
+    HC_SR04_Trigger_All();
 
-    const float THRESHOLD = 10.0f;     // cm - safety threshold
-    const int16_t TEST_SPEED = 20;     // 20% PWM for testing (lebih pelan)
-    const uint32_t TEST_DURATION = 1000;  // 1 second per test phase
-
-    printf("\r\n=== MOTOR TEST START ===\r\n");
-    printf("Test Speed: %d%%, Duration: %lu ms\r\n", TEST_SPEED, TEST_DURATION);
-    printf("Safety Threshold: %.1f cm\r\n\n", THRESHOLD);
-
-    while (1) {
-        // ====================================================================
-        // PHASE 1: TEST FORWARD (RPWM) - Duration = TEST_DURATION
-        // ====================================================================
-        printf("\r\n--- PHASE 1: FORWARD (RPWM) ---\r\n");
-        uint32_t phase_start = HAL_GetTick();
-
-        while (HAL_GetTick() - phase_start < TEST_DURATION) {
-            uint32_t cycle_start = HAL_GetTick();
-
-            // === 1. Trigger all sensors ===
-            HC_SR04_Trigger_All();
-
-            // === 2. Wait for captures with timeout ===
-            while (sensors_captured_count < NUM_SENSORS) {
-                if (__HAL_TIM_GET_COUNTER(&htim5) > SENSOR_TIMEOUT_US) {
-                    break;
-                }
-            }
-
-            // === 3. Calculate distances and update filters ===
-            for (int i = 0; i < NUM_SENSORS; i++) {
-                float raw_distance = HC_SR04_Calculate_Distance(&sensors[i]);
-
-                if (raw_distance > 0) {
-                    HC_SR04_Update_Filter(&sensors[i], raw_distance);
-                } else {
-                    sensors[i].filtered_distance = 0.0f;
-                }
-            }
-
-            // === 4. Threshold Control with 4 front sensors ===
-            float front_left = sensors[0].filtered_distance;   // US1 (depan kanan)
-            float front_right = sensors[1].filtered_distance;  // US2 (depan kiri)
-
-            // Find minimum VALID distance (ignore 0 = undefined)
-            float min_distance = 0.0f;
-
-            if (front_left > 0 && front_right > 0) {
-                // Both sensors valid: take minimum
-                min_distance = (front_left < front_right) ? front_left : front_right;
-            } else if (front_left > 0) {
-                // Only left sensor valid
-                min_distance = front_left;
-            } else if (front_right > 0) {
-                // Only right sensor valid
-                min_distance = front_right;
-            } else {
-                // Both sensors 0 (undefined/too far) = no obstacle detected
-                min_distance = 0.0f;
-            }
-
-            // Safe threshold logic: 0cm = no obstacle = keep moving
-            if (min_distance == 0.0f) {
-                // No valid sensor reading = no obstacle detected = safe to move
-                Motor_SetSpeed(MOTOR_1, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_2, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, TEST_SPEED);
-                printf("FORWARD - NO OBSTACLE (undefined) - PWM %d%%\r\n", TEST_SPEED);
-            } else if (min_distance < THRESHOLD) {
-                // Obstacle detected close: STOP
-                Motor_Stop_All();
-                printf("FORWARD - OBSTACLE (%.1fcm) - PWM 0%% STOP\r\n", min_distance);
-            } else {
-                // Clear path: distance >= threshold
-                Motor_SetSpeed(MOTOR_1, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_2, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, TEST_SPEED);
-                printf("FORWARD - CLEAR (%.1fcm) - PWM %d%%\r\n", min_distance, TEST_SPEED);
-            }
-
-            // === 5. Print all sensor data ===
-            HC_SR04_Print_Data();
-
-            // === 6. Maintain measurement interval ===
-            while (HAL_GetTick() - cycle_start < MEASUREMENT_INTERVAL_MS) {}
+    // === 2. Wait for captures with timeout ===
+    while (sensors_captured_count < NUM_SENSORS) {
+        if (__HAL_TIM_GET_COUNTER(&htim5) > SENSOR_TIMEOUT_US) {
+            break;
         }
-
-        // Stop motors at end of phase
-        Motor_Stop_All();
-
-        // ====================================================================
-        // STOP PHASE - 2 seconds
-        // ====================================================================
-        printf("\r\n--- STOP PHASE ---\r\n");
-        HAL_Delay(2000);
-
-        // ====================================================================
-        // PHASE 2: TEST REVERSE (LPWM) - Duration = TEST_DURATION
-        // ====================================================================
-        printf("\r\n--- PHASE 2: REVERSE (LPWM) ---\r\n");
-        phase_start = HAL_GetTick();
-
-        while (HAL_GetTick() - phase_start < TEST_DURATION) {
-            uint32_t cycle_start = HAL_GetTick();
-
-            // === 1. Trigger all sensors ===
-            HC_SR04_Trigger_All();
-
-            // === 2. Wait for captures with timeout ===
-            while (sensors_captured_count < NUM_SENSORS) {
-                if (__HAL_TIM_GET_COUNTER(&htim5) > SENSOR_TIMEOUT_US) {
-                    break;
-                }
-            }
-
-            // === 3. Calculate distances and update filters ===
-            for (int i = 0; i < NUM_SENSORS; i++) {
-                float raw_distance = HC_SR04_Calculate_Distance(&sensors[i]);
-
-                if (raw_distance > 0) {
-                    HC_SR04_Update_Filter(&sensors[i], raw_distance);
-                } else {
-                    sensors[i].filtered_distance = 0.0f;
-                }
-            }
-
-            // === 4. Threshold Control with 4 front sensors ===
-            float front_left = sensors[0].filtered_distance;
-            float front_right = sensors[1].filtered_distance;
-
-            float min_distance = 0.0f;
-
-            if (front_left > 0 && front_right > 0) {
-                min_distance = (front_left < front_right) ? front_left : front_right;
-            } else if (front_left > 0) {
-                min_distance = front_left;
-            } else if (front_right > 0) {
-                min_distance = front_right;
-            } else {
-                min_distance = 0.0f;
-            }
-
-            // Safe threshold logic
-            if (min_distance == 0.0f) {
-                Motor_SetSpeed(MOTOR_1, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_2, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, -TEST_SPEED);
-                printf("REVERSE - NO OBSTACLE (undefined) - PWM %d%%\r\n", TEST_SPEED);
-            } else if (min_distance < THRESHOLD) {
-                Motor_Stop_All();
-                printf("REVERSE - OBSTACLE (%.1fcm) - PWM 0%% STOP\r\n", min_distance);
-            } else {
-                Motor_SetSpeed(MOTOR_1, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_2, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, -TEST_SPEED);
-                printf("REVERSE - CLEAR (%.1fcm) - PWM %d%%\r\n", min_distance, TEST_SPEED);
-            }
-
-            // === 5. Print all sensor data ===
-            HC_SR04_Print_Data();
-
-            // === 6. Maintain measurement interval ===
-            while (HAL_GetTick() - cycle_start < MEASUREMENT_INTERVAL_MS) {}
-        }
-
-        // Stop motors at end of phase
-        Motor_Stop_All();
-
-        // ====================================================================
-        // STOP PHASE - 2 seconds
-        // ====================================================================
-        printf("\r\n--- STOP PHASE ---\r\n");
-        HAL_Delay(2000);
-
-        printf("\r\n=== TEST CYCLE COMPLETE - RESTARTING ===\r\n");
-        HAL_Delay(1000);
     }
+
+    // === 3. Calculate distances and update filters ===
+    for (int i = 0; i < NUM_SENSORS; i++) {
+        float raw_distance = HC_SR04_Calculate_Distance(&sensors[i]);
+
+        if (raw_distance > 0) {
+            HC_SR04_Update_Filter(&sensors[i], raw_distance);
+        } else {
+            sensors[i].filtered_distance = 0.0f;
+        }
+    }
+
+    // === 4. Simple Threshold Control (TIM9 PWM only) ===
+    float front_left = sensors[0].filtered_distance;   // US1 (depan kiri)
+    float front_right = sensors[1].filtered_distance;  // US2 (depan kanan)
+
+    const float THRESHOLD = 10.0f;  // cm
+
+    // Find minimum VALID distance (ignore 0 = undefined)
+    float min_distance = 0.0f;
+
+    if (front_left > 0 && front_right > 0) {
+        // Both sensors valid: take minimum
+        min_distance = (front_left < front_right) ? front_left : front_right;
+    } else if (front_left > 0) {
+        // Only left sensor valid
+        min_distance = front_left;
+    } else if (front_right > 0) {
+        // Only right sensor valid
+        min_distance = front_right;
+    } else {
+        // Both sensors 0 (undefined/too far) = no obstacle detected
+        min_distance = 0.0f;
+    }
+
+    // Safe threshold logic: 0cm = no obstacle = keep moving
+    if (min_distance == 0.0f) {
+        // No valid sensor reading = no obstacle detected = safe to move
+        Motor_Test_TIM9_PWM(50);
+        printf("NO OBSTACLE (undefined) - PWM 50%%\r\n");
+    } else if (min_distance < THRESHOLD) {
+        // Obstacle detected close: STOP
+        Motor_Test_TIM9_PWM(0);
+        printf("OBSTACLE (%.1fcm) - PWM 0%% STOP\r\n", min_distance);
+    } else {
+        // Clear path: distance >= threshold
+        Motor_Test_TIM9_PWM(50);
+        printf("CLEAR (%.1fcm) - PWM 50%%\r\n", min_distance);
+    }
+
+    // === 5. Print sensor data ===
+    HC_SR04_Print_Data();
+
+    // === 6. Maintain measurement interval ===
+    while (HAL_GetTick() - cycle_start < MEASUREMENT_INTERVAL_MS) {}
 
   }  // Close while(1) loop
 
