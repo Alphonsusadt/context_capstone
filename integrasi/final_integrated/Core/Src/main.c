@@ -123,13 +123,20 @@ int main(void)
 
   // Initialize HC-SR04 sensor library
   HC_SR04_Delay_Init(&htim5);  // Initialize delay timer
+  HAL_Delay(100);               // Wait for timers to stabilize
   HC_SR04_Init();               // Initialize all 8 sensors + start input capture
+  HAL_Delay(200);               // Wait for sensors to settle after power-on
+
+  // Dummy reads to clear any noise
+  HC_SR04_Trigger_All();
+  HAL_Delay(60);
+  HC_SR04_Trigger_All();
+  HAL_Delay(60);
+
   Motor_Init();
 
-  printf("SYSTEM READY - SIMPLE THRESHOLD TEST\r\n");
-  printf("Distance threshold: 10.0 cm\r\n");
-  printf("Distance > 10cm: PWM 50%%\r\n");
-  printf("Distance < 10cm: PWM 0%% (STOP)\r\n");
+  printf("SYSTEM READY - CONTINUOUS FORWARD MODE\r\n");
+  printf("Sensor settling complete.\r\n");
   HAL_Delay(100);
 
   /* USER CODE END 2 */
@@ -143,119 +150,100 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     // ========================================================================
-    // SIMPLE MOTOR TEST MODE WITH THRESHOLD SAFETY
+    // DIAGNOSTIC MODE: Test motor direction one by one
     // ========================================================================
-    // Test sequence: RPWM (forward) -> Stop -> LPWM (reverse) -> Stop
-    // Threshold: Stop all motors if obstacle < 10cm detected by front sensors
-    // Front sensors: US1 (A), US2 (B), US3 (C), US4 (H) - hanya 4 sensor depan
+    // Uncomment salah satu mode:
+    // MODE 1: Test individual motors (untuk cek arah tiap motor)
+    // MODE 2: Continuous forward with sensor detection
     // ========================================================================
 
-    const float THRESHOLD = 10.0f;     // cm - safety threshold
-    const int16_t TEST_SPEED = 20;     // 20% PWM for testing (lebih pelan)
-    const uint32_t TEST_DURATION = 1000;  // 1 second per test phase
+    #define DIAGNOSTIC_MODE 0  // Set to 1 for motor test, 0 for normal operation
 
-    printf("\r\n=== MOTOR TEST START ===\r\n");
-    printf("Test Speed: %d%%, Duration: %lu ms\r\n", TEST_SPEED, TEST_DURATION);
-    printf("Safety Threshold: %.1f cm\r\n\n", THRESHOLD);
+#if DIAGNOSTIC_MODE == 1
+    // ========================================================================
+    // DIAGNOSTIC: Test each motor individually
+    // ========================================================================
+    printf("\r\n=== MOTOR DIAGNOSTIC MODE ===\r\n");
+    printf("Testing each motor forward (speed 30%%) for 2 seconds\r\n");
+    printf("Check which motors go FORWARD vs BACKWARD\r\n\n");
 
     while (1) {
-        // ====================================================================
-        // PHASE 1: TEST FORWARD (RPWM) - 3 seconds
-        // ====================================================================
-        printf("\r\n--- PHASE 1: FORWARD (RPWM) ---\r\n");
-        uint32_t phase_start = HAL_GetTick();
-
-        while (HAL_GetTick() - phase_start < TEST_DURATION) {
-            // Read front sensors (US1, US2, US3, US4)
-            HC_SR04_Trigger_All();
-            HAL_Delay(50);  // Wait for echo
-
-            // Calculate distances for 4 front sensors only
-            float us1 = HC_SR04_Calculate_Distance(&sensors[0]);  // A - Dp_Kn
-            float us2 = HC_SR04_Calculate_Distance(&sensors[1]);  // B - Dp_Kr
-            float us3 = HC_SR04_Calculate_Distance(&sensors[2]);  // C - Sp_Kr_Dp
-            float us4 = HC_SR04_Calculate_Distance(&sensors[3]);  // H - Sp_Kr_Bl
-
-            // Find minimum distance (ignore 0 = no reading)
-            float min_dist = 999.0f;
-            if (us1 > 0 && us1 < min_dist) min_dist = us1;
-            if (us2 > 0 && us2 < min_dist) min_dist = us2;
-            if (us3 > 0 && us3 < min_dist) min_dist = us3;
-            if (us4 > 0 && us4 < min_dist) min_dist = us4;
-
-            // Safety check: Stop if obstacle detected
-            if (min_dist < THRESHOLD) {
-                Motor_Stop_All();
-                printf("OBSTACLE %.1f cm - EMERGENCY STOP!\r\n", min_dist);
-                HAL_Delay(100);
-            } else {
-                // Safe: Run all motors forward
-                Motor_SetSpeed(MOTOR_1, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_2, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, TEST_SPEED);
-                printf("FORWARD - US1:%.1f US2:%.1f US3:%.1f US4:%.1f\r\n",
-                       us1, us2, us3, us4);
-                HAL_Delay(100);
-            }
-        }
-
-        // ====================================================================
-        // STOP PHASE - 2 seconds
-        // ====================================================================
-        printf("\r\n--- STOP PHASE ---\r\n");
-        Motor_Stop_All();
+        printf("Testing MOTOR_1 (B - Kanan Depan)...\r\n");
+        Motor_SetSpeed(MOTOR_1, 30);
         HAL_Delay(2000);
-
-        // ====================================================================
-        // PHASE 2: TEST REVERSE (LPWM) - 3 seconds
-        // ====================================================================
-        printf("\r\n--- PHASE 2: REVERSE (LPWM) ---\r\n");
-        phase_start = HAL_GetTick();
-
-        while (HAL_GetTick() - phase_start < TEST_DURATION) {
-            // Read front sensors
-            HC_SR04_Trigger_All();
-            HAL_Delay(50);
-
-            float us1 = HC_SR04_Calculate_Distance(&sensors[0]);
-            float us2 = HC_SR04_Calculate_Distance(&sensors[1]);
-            float us3 = HC_SR04_Calculate_Distance(&sensors[2]);
-            float us4 = HC_SR04_Calculate_Distance(&sensors[3]);
-
-            float min_dist = 999.0f;
-            if (us1 > 0 && us1 < min_dist) min_dist = us1;
-            if (us2 > 0 && us2 < min_dist) min_dist = us2;
-            if (us3 > 0 && us3 < min_dist) min_dist = us3;
-            if (us4 > 0 && us4 < min_dist) min_dist = us4;
-
-            // Safety check
-            if (min_dist < THRESHOLD) {
-                Motor_Stop_All();
-                printf("OBSTACLE %.1f cm - EMERGENCY STOP!\r\n", min_dist);
-                HAL_Delay(100);
-            } else {
-                // Safe: Run all motors reverse
-                Motor_SetSpeed(MOTOR_1, -TEST_SPEED);  // Negative = reverse
-                Motor_SetSpeed(MOTOR_2, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_3, -TEST_SPEED);
-                Motor_SetSpeed(MOTOR_4, -TEST_SPEED);
-                printf("REVERSE - US1:%.1f US2:%.1f US3:%.1f US4:%.1f\r\n",
-                       us1, us2, us3, us4);
-                HAL_Delay(100);
-            }
-        }
-
-        // ====================================================================
-        // STOP PHASE - 2 seconds
-        // ====================================================================
-        printf("\r\n--- STOP PHASE ---\r\n");
         Motor_Stop_All();
-        HAL_Delay(2000);
-
-        printf("\r\n=== TEST CYCLE COMPLETE - RESTARTING ===\r\n");
         HAL_Delay(1000);
+
+        printf("Testing MOTOR_2 (C - Kiri Depan)...\r\n");
+        Motor_SetSpeed(MOTOR_2, 30);
+        HAL_Delay(2000);
+        Motor_Stop_All();
+        HAL_Delay(1000);
+
+        printf("Testing MOTOR_3 (A - Kanan Belakang)...\r\n");
+        Motor_SetSpeed(MOTOR_3, 30);
+        HAL_Delay(2000);
+        Motor_Stop_All();
+        HAL_Delay(1000);
+
+        printf("Testing MOTOR_4 (D - Kiri Belakang)...\r\n");
+        Motor_SetSpeed(MOTOR_4, 30);
+        HAL_Delay(2000);
+        Motor_Stop_All();
+        HAL_Delay(1000);
+
+        printf("\r\n=== Cycle complete. Check serial output ===\r\n");
+        printf("Press RESET to test again.\r\n");
+        while (1) { HAL_Delay(1000); }
     }
+
+#else
+    // ========================================================================
+    // NORMAL MODE: Continuous forward with sensor detection
+    // ========================================================================
+    const float THRESHOLD = 10.0f;     // cm - safety threshold
+    const int16_t FORWARD_SPEED = 20;  // 20% PWM for forward movement
+
+    printf("\r\n=== CONTINUOUS FORWARD MODE ===\r\n");
+    printf("Forward Speed: %d%%\r\n", FORWARD_SPEED);
+    printf("Stop Condition: Sensor A AND B detect obstacle < %.1f cm\r\n\n", THRESHOLD);
+
+    while (1) {
+        // Read front sensors A and B
+        HC_SR04_Trigger_All();
+        HAL_Delay(50);  // Wait for echo (interrupt-based capture)
+
+        // Calculate distances for sensor A (US1) and B (US2)
+        float sensor_a = HC_SR04_Calculate_Distance(&sensors[0]);  // A - Depan Kiri
+        float sensor_b = HC_SR04_Calculate_Distance(&sensors[1]);  // B - Depan Kanan
+
+        // Check if BOTH sensor A AND B detect obstacle < threshold
+        bool a_detect = (sensor_a > 0 && sensor_a < THRESHOLD);
+        bool b_detect = (sensor_b > 0 && sensor_b < THRESHOLD);
+
+        if (a_detect && b_detect) {
+            // BOTH sensors detect obstacle - STOP PERMANENTLY
+            Motor_Stop_All();
+            printf("STOP! A:%.1f cm, B:%.1f cm - BOTH DETECT OBSTACLE\r\n",
+                   sensor_a, sensor_b);
+            printf("Robot stopped permanently. Press RESET to restart.\r\n");
+
+            // Infinite loop - robot stays stopped
+            while (1) {
+                HAL_Delay(1000);
+            }
+        } else {
+            // Continue moving forward
+            Motor_SetSpeed(MOTOR_1, FORWARD_SPEED);
+            Motor_SetSpeed(MOTOR_2, FORWARD_SPEED);
+            Motor_SetSpeed(MOTOR_3, FORWARD_SPEED);
+            Motor_SetSpeed(MOTOR_4, FORWARD_SPEED);
+
+            printf("FORWARD - A:%.1f cm, B:%.1f cm\r\n", sensor_a, sensor_b);
+            HAL_Delay(100);
+        }
+    }
+#endif
 
   }  // Close while(1) loop
 
