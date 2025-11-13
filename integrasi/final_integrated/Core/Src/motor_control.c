@@ -26,6 +26,9 @@ static uint16_t speed_to_duty(int16_t speed);
 
 /**
   * @brief  Initialize motor control library
+  * @note   IMPORTANT: Motor kiri (C & D) polaritas terbalik!
+  *         - Motor Kanan (A & B): RPWM = maju, LPWM = mundur (normal)
+  *         - Motor Kiri (C & D): LPWM = maju, RPWM = mundur (inversi)
   * @retval None
   */
 void Motor_Init(void) {
@@ -120,17 +123,34 @@ void Motor_SetSpeed(uint8_t motor_id, int16_t speed) {
 
     uint16_t duty = speed_to_duty(speed);
 
+    // Motor kiri (C & D) polaritas terbalik, perlu inversi
+    bool is_left_motor = (motor_id == MOTOR_2 || motor_id == MOTOR_4);  // C = MOTOR_2, D = MOTOR_4
+
     if (speed > 0) {
         // Forward
         motors[motor_id].direction = MOTOR_DIR_FORWARD;
-        __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, duty);
-        __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, 0);
+        if (is_left_motor) {
+            // Motor kiri: LPWM = maju, RPWM = 0
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, 0);
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, duty);
+        } else {
+            // Motor kanan: RPWM = maju, LPWM = 0
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, duty);
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, 0);
+        }
     }
     else if (speed < 0) {
         // Reverse
         motors[motor_id].direction = MOTOR_DIR_REVERSE;
-        __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, 0);
-        __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, duty);
+        if (is_left_motor) {
+            // Motor kiri: RPWM = mundur, LPWM = 0
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, duty);
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, 0);
+        } else {
+            // Motor kanan: LPWM = mundur, RPWM = 0
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_rpwm, 0);
+            __HAL_TIM_SET_COMPARE(motors[motor_id].htim, motors[motor_id].channel_lpwm, duty);
+        }
     }
     else {
         // Stop
