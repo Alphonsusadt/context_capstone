@@ -199,47 +199,71 @@ int main(void)
 
 #else
     // ========================================================================
-    // NORMAL MODE: Continuous forward with sensor detection
+    // NORMAL MODE: Forward dengan auto turn LEFT saat ada halangan depan
     // ========================================================================
-    const float THRESHOLD = 10.0f;     // cm - safety threshold
-    const int16_t FORWARD_SPEED = 20;  // 20% PWM for forward movement
+    const float THRESHOLD = 10.0f;         // cm - safety threshold (TIDAK DIUBAH)
+    const int16_t FORWARD_SPEED = 20;      // 20% PWM untuk maju
+    const int16_t TURN_SPEED = 25;         // 25% PWM untuk belok
+    const uint16_t TURN_DURATION_MS = 800; // Durasi belok (ms)
 
-    printf("\r\n=== CONTINUOUS FORWARD MODE ===\r\n");
-    printf("Forward Speed: %d%%\r\n", FORWARD_SPEED);
-    printf("Stop Condition: Sensor A AND B detect obstacle < %.1f cm\r\n\n", THRESHOLD);
+    printf("\r\n=== AUTO LEFT TURN MODE ===\r\n");
+    printf("Forward Speed: %d%%, Turn Speed: %d%%\r\n", FORWARD_SPEED, TURN_SPEED);
+    printf("Stop Threshold: %.1f cm\r\n", THRESHOLD);
+    printf("Action: Auto turn LEFT when obstacle detected\r\n\n");
 
     while (1) {
-        // Read front sensors A and B
+        // ========================================================================
+        // STEP 1: Baca sensor depan (US1 dan US2)
+        // ========================================================================
         HC_SR04_Trigger_All();
-        HAL_Delay(50);  // Wait for echo (interrupt-based capture)
+        HAL_Delay(50);  // Wait for echo capture
 
-        // Calculate distances for sensor A (US1) and B (US2)
-        float sensor_a = HC_SR04_Calculate_Distance(&sensors[0]);  // A - Depan Kiri
-        float sensor_b = HC_SR04_Calculate_Distance(&sensors[1]);  // B - Depan Kanan
+        // Hitung jarak sensor depan
+        float sensor_a = HC_SR04_Calculate_Distance(&sensors[0]);  // US1 - Depan Kiri
+        float sensor_b = HC_SR04_Calculate_Distance(&sensors[1]);  // US2 - Depan Kanan
 
-        // Check if BOTH sensor A AND B detect obstacle < threshold
-        bool a_detect = (sensor_a > 0 && sensor_a < THRESHOLD);
-        bool b_detect = (sensor_b > 0 && sensor_b < THRESHOLD);
+        // Deteksi halangan di depan (sensor A DAN B)
+        bool front_blocked = (sensor_a > 0 && sensor_a < THRESHOLD) &&
+                             (sensor_b > 0 && sensor_b < THRESHOLD);
 
-        if (a_detect && b_detect) {
-            // BOTH sensors detect obstacle - STOP PERMANENTLY
+        // ========================================================================
+        // STEP 2: Logika Navigasi Sederhana
+        // ========================================================================
+        if (front_blocked) {
+            // DEPAN TERHALANG - BERHENTI dan BELOK KIRI LANGSUNG
             Motor_Stop_All();
-            printf("STOP! A:%.1f cm, B:%.1f cm - BOTH DETECT OBSTACLE\r\n",
-                   sensor_a, sensor_b);
-            printf("Robot stopped permanently. Press RESET to restart.\r\n");
+            printf("\r\n*** OBSTACLE DETECTED ***\r\n");
+            printf("Front: A=%.1fcm, B=%.1fcm\r\n", sensor_a, sensor_b);
+            printf("Stopping...\r\n");
 
-            // Infinite loop - robot stays stopped
-            while (1) {
-                HAL_Delay(1000);
-            }
+            HAL_Delay(300);  // Berhenti sejenak (300ms)
+
+            printf("Turning LEFT...\r\n\n");
+
+            // BELOK KIRI: Motor kanan maju, motor kiri mundur
+            Motor_SetSpeed(MOTOR_1, TURN_SPEED);   // Kanan Depan - Maju
+            Motor_SetSpeed(MOTOR_3, TURN_SPEED);   // Kanan Belakang - Maju
+            Motor_SetSpeed(MOTOR_2, -TURN_SPEED);  // Kiri Depan - Mundur
+            Motor_SetSpeed(MOTOR_4, -TURN_SPEED);  // Kiri Belakang - Mundur
+
+            HAL_Delay(TURN_DURATION_MS);  // Belok selama durasi yang ditentukan
+
+            Motor_Stop_All();
+            HAL_Delay(200);  // Pause setelah belok
+
+            printf("Turn complete. Resuming forward...\r\n");
+
         } else {
-            // Continue moving forward
+            // ====================================================================
+            // DEPAN BEBAS - MAJU TERUS
+            // ====================================================================
             Motor_SetSpeed(MOTOR_1, FORWARD_SPEED);
             Motor_SetSpeed(MOTOR_2, FORWARD_SPEED);
             Motor_SetSpeed(MOTOR_3, FORWARD_SPEED);
             Motor_SetSpeed(MOTOR_4, FORWARD_SPEED);
 
-            printf("FORWARD - A:%.1f cm, B:%.1f cm\r\n", sensor_a, sensor_b);
+            printf("FORWARD - A=%.1fcm, B=%.1fcm\r\n", sensor_a, sensor_b);
+
             HAL_Delay(100);
         }
     }
