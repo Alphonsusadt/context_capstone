@@ -202,8 +202,8 @@ int main(void)
     // NORMAL MODE: Forward dengan auto turn LEFT saat ada halangan depan
     // ========================================================================
     const float THRESHOLD = 10.0f;         // cm - safety threshold (TIDAK DIUBAH)
-    const int16_t FORWARD_SPEED = 20;      // 20% PWM untuk maju
-    const int16_t TURN_SPEED = 25;         // 25% PWM untuk belok
+    const int16_t FORWARD_SPEED = 5;      // 20% PWM untuk maju
+    const int16_t TURN_SPEED = 5;         // 25% PWM untuk belok
     const uint16_t TURN_DURATION_MS = 800; // Durasi belok (ms)
 
     printf("\r\n=== AUTO LEFT TURN MODE ===\r\n");
